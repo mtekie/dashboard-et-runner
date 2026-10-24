@@ -1,0 +1,65 @@
+name: Scheduled ingest backstop
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-ingest
+  cancel-in-progress: false
+
+jobs:
+  refresh-feed:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DASHBOARD_INGEST_STORE: database
+      DASHBOARD_WORKER_ID: github-actions-ingest-worker
+    steps:
+      - name: Check out the private app repository
+        uses: actions/checkout@v4
+        with:
+          repository: mtekie/dashboard-et
+          ref: main
+          ssh-key: ${{ secrets.APP_REPO_DEPLOY_KEY }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate ingestion task manifest
+        run: pnpm run check:schedule
+
+      - name: Run overlap-safe durable ingestion worker
+        id: ingest_worker
+        run: pnpm run worker:ingest
+
+      - name: Report source yield by beat
+        if: always()
+        run: pnpm run audit:sources
+
+      - name: Validate generated ingestion contracts
+        run: pnpm run test:ingest
+
+      - name: Summarize durable ingestion health
+        if: always()
+        run: |
+          {
+            echo "## Durable ingestion backstop"
+            echo "- Worker outcome: ${{ steps.ingest_worker.outcome }}"
+            echo "- Persistence failures fail this job; source-lane degradation is recorded in the ingest batch metrics."
+          } >> "$GITHUB_STEP_SUMMARY"

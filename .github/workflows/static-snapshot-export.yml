@@ -1,0 +1,53 @@
+name: Static snapshot export
+
+on:
+  schedule:
+    - cron: "15 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: static-snapshot-export
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the private app repository
+        uses: actions/checkout@v4
+        with:
+          repository: mtekie/dashboard-et
+          ref: main
+          ssh-key: ${{ secrets.APP_REPO_DEPLOY_KEY }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Export static snapshot artifacts
+        run: pnpm run ingest -- --due-only
+
+      - name: Refresh ESX Market Lab data
+        run: pnpm run capture:esx-lab
+
+      - name: Validate exported snapshot
+        run: pnpm run test:ingest
+
+      - name: Commit exported snapshot
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Refresh static snapshot export"
+          file_pattern: "public/data/live_events.json ops/source_health.json public/data/market_indicators.json public/data/indicator_history.json public/data/daily_brief.json public/data/scheduled_tasks.json public/data/esx_lab.json"
