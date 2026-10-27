@@ -53,8 +53,13 @@ jobs:
         if: always()
         run: pnpm run audit:sources
 
+      # Fixture tests must never reach the production database: with the job-level
+      # store settings they persist a July 2026 fixture batch over feed_status.
       - name: Validate generated ingestion contracts
         run: pnpm run test:ingest
+        env:
+          DATABASE_URL: ""
+          DASHBOARD_INGEST_STORE: ""
 
       - name: Summarize durable ingestion health
         if: always()
