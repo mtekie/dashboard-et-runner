@@ -19,6 +19,7 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DASHBOARD_INGEST_STORE: database
       DASHBOARD_WORKER_ID: github-actions-ingest-worker
+      DASHBOARD_MUSE_TOKEN: ${{ secrets.DASHBOARD_MUSE_TOKEN }}
     steps:
       - name: Check out the private app repository
         uses: actions/checkout@v4
