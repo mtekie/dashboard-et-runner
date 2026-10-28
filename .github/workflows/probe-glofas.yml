@@ -1,0 +1,40 @@
+name: Probe GloFAS
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_ref:
+        description: App branch or commit containing the probe
+        required: true
+        default: codex/x14-flood-outlook
+      job_id:
+        description: Existing EWDS job ID to inspect (leave empty to submit)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the private app repository
+        uses: actions/checkout@v4
+        with:
+          repository: mtekie/dashboard-et
+          ref: ${{ inputs.app_ref }}
+          ssh-key: ${{ secrets.APP_REPO_DEPLOY_KEY }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Submit or inspect the probe
+        env:
+          EWDS_API_KEY: ${{ secrets.EWDS_API_KEY }}
+          EWDS_JOB_ID: ${{ inputs.job_id }}
+        run: |
+          if [ -n "$EWDS_JOB_ID" ]; then
+            node scripts/probe-glofas.mjs --check --job-id "$EWDS_JOB_ID"
+          else
+            node scripts/probe-glofas.mjs --check
+          fi
