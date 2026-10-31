@@ -1,190 +1,45 @@
-name: Static snapshot export
+name: Probe OpenAQ air quality
 
 on:
-  schedule:
-    - cron: "15 2 * * *"
-    - cron: "0 3 * * 1"
-    - cron: "0 4 * * *" # 07:00 EAT morning brief
-    - cron: "0 */6 * * *" # Earthquake alerts, at most once per six hours
   workflow_dispatch:
+    inputs:
+      app_ref:
+        description: App branch or commit containing the diagnostics
+        required: true
+        default: main
 
 permissions:
-  contents: write
-
-concurrency:
-  group: static-snapshot-export
-  cancel-in-progress: false
+  contents: read
 
 jobs:
-  export:
+  probe:
     runs-on: ubuntu-latest
-    env:
-      DASHBOARD_MUSE_TOKEN: ${{ secrets.DASHBOARD_MUSE_TOKEN }}
-      OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+    timeout-minutes: 5
     steps:
       - name: Check out the private app repository
         uses: actions/checkout@v4
         with:
           repository: mtekie/dashboard-et
-          ref: main
+          ref: ${{ inputs.app_ref }}
           ssh-key: ${{ secrets.APP_REPO_DEPLOY_KEY }}
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.15.0
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Export static snapshot artifacts
-        run: pnpm run ingest -- --due-only
-
-      - name: Refresh ESX Market Lab data
-        run: pnpm run capture:esx-lab
-
-      - name: Refresh earthquake data
-        continue-on-error: true
-        run: pnpm run capture:quakes
+      - name: Diagnose eligible stations without writing artifacts
         env:
-          DASHBOARD_MUSE_TOKEN: ""
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+        run: node scripts/capture-air-quality.mjs --diagnostics | tee openaq-diagnostics.txt
 
-      - name: Refresh Addis air quality
-        continue-on-error: true
-        run: node scripts/capture-air-quality.mjs
-
-      - name: Refresh city weather
-        continue-on-error: true
-        run: pnpm run capture:weather
-
-      - name: Refresh sovereign debt data
-        continue-on-error: true
-        run: pnpm run capture:debt
-
-      - name: Refresh World Bank commodity benchmarks
-        continue-on-error: true
-        run: pnpm run capture:commodities
-
-      - name: Install PDF text extraction for official CPI releases
-        run: sudo apt-get update -qq && sudo apt-get install -y poppler-utils
-
-      - name: Refresh desert locust status weekly
-        if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
-        continue-on-error: true
+      - name: Summarize OpenAQ diagnostics
+        if: always()
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || [ "$(date -u +%u)" = "1" ]; then
-            pnpm run capture:locust
-          else
-            echo "Skipping weekly desert locust status refresh"
-          fi
-
-      - name: Refresh energy, official fuel, food and CPI prices
-        continue-on-error: true
-        run: pnpm run capture:business-prices
-
-      - name: Build weekly investor brief at 06:00 EAT
-        if: ${{ github.event.schedule == '0 3 * * 1' }}
-        run: |
-          if [ "$(TZ=Africa/Addis_Ababa date +%u)" = "1" ]; then
-            node scripts/build-investor-brief.mjs
-          fi
-
-      - name: Refresh IATI aid flows weekly
-        continue-on-error: true
-        env:
-          IATI_API_KEY: ${{ secrets.IATI_API_KEY }}
-        run: |
-          if [ "$(TZ=Africa/Addis_Ababa date +%u)" = "1" ]; then
-            node scripts/capture-iati.mjs
-          else
-            echo "Skipping weekly IATI refresh"
-          fi
-
-      - name: Build sources and methods page data
-        run: node scripts/build-sources-page.mjs
-
-      - name: Validate exported snapshot
-        run: pnpm run test:ingest
-
-      - name: Select snapshot files that exist or are tracked
-        id: snapshot_files
-        run: |
-          files=(
-            public/data/sources_public.json public/briefs/investor/latest-public.json
-            public/data/live_events.json ops/source_health.json public/data/market_indicators.json
-            public/data/indicator_history.json public/data/daily_brief.json public/data/scheduled_tasks.json
-            public/data/esx_lab.json public/data/earthquakes.json public/data/locust.json
-            public/data/weather.json public/data/commodities.json public/data/energy-prices.json
-            public/data/fuel-prices.json public/data/food-prices.json public/data/cpi-prices.json
-            public/data/debt.json public/data/aid-flows.json ops/iati_resume.json ops/iati_excluded.json
-            public/data/air-quality.json public/data/regulations.json
-          )
-          selected=()
-          for file in "${files[@]}"; do
-            if [ -f "$file" ] || git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
-              selected+=("$file")
-            fi
-          done
-          [ "${#selected[@]}" -gt 0 ] || { echo "No snapshot files found" >&2; exit 1; }
-          printf 'files=%s\n' "${selected[*]}" >> "$GITHUB_OUTPUT"
-
-      - name: Commit exported snapshot
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Refresh static snapshot export"
-          file_pattern: ${{ steps.snapshot_files.outputs.files }}
-
-      - name: Preview Telegram messages
-        run: |
-          node scripts/post-telegram.mjs --dry-run | tee telegram-dry-run.txt
           {
-            echo "## Telegram dry run"
-            echo '```'
-            cat telegram-dry-run.txt
+            echo "## OpenAQ read-only probe"
+            echo '```text'
+            if [ -f openaq-diagnostics.txt ]; then cat openaq-diagnostics.txt; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload Telegram dry run
-        uses: actions/upload-artifact@v4
-        with:
-          name: telegram-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-          path: telegram-dry-run.txt
-
-      # Michael enables TELEGRAM_SEND only after reviewing three dry-run days.
-      - name: Send eligible Telegram messages
-        id: telegram_send
-        env:
-          TELEGRAM_SEND: ${{ vars.TELEGRAM_SEND }}
-          TELEGRAM_POSTING: ${{ vars.TELEGRAM_POSTING }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-        run: |
-          if [ "$TELEGRAM_SEND" = "on" ] && [ -n "$TELEGRAM_BOT_TOKEN" ] && [ "$TELEGRAM_POSTING" != "off" ]; then
-            node scripts/post-telegram.mjs --send
-          else
-            echo "Telegram sending is disabled."
-          fi
-
-      - name: Commit accepted Telegram post keys
-        if: ${{ always() && steps.telegram_send.outcome != 'skipped' }}
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Record accepted Telegram posts"
-          file_pattern: "ops/telegram_posted.json"
-
-      - name: Fail when the ESX Market Lab snapshot is stale
-        run: pnpm run check:esx-lab
-
-      - name: Check the monthly commodity release
-        if: always()
-        run: pnpm run check:commodities
-
-      - name: Check business price observations after publication
-        if: always()
-        run: pnpm run check:business-prices
