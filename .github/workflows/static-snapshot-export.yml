@@ -30,6 +30,7 @@ jobs:
           node-version: 22
 
       - name: Diagnose eligible stations without writing artifacts
+        shell: bash
         env:
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
         run: node scripts/capture-air-quality.mjs --diagnostics | tee openaq-diagnostics.txt
