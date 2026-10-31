@@ -112,11 +112,33 @@ jobs:
       - name: Validate exported snapshot
         run: pnpm run test:ingest
 
+      - name: Select snapshot files that exist or are tracked
+        id: snapshot_files
+        run: |
+          files=(
+            public/data/sources_public.json public/briefs/investor/latest-public.json
+            public/data/live_events.json ops/source_health.json public/data/market_indicators.json
+            public/data/indicator_history.json public/data/daily_brief.json public/data/scheduled_tasks.json
+            public/data/esx_lab.json public/data/earthquakes.json public/data/locust.json
+            public/data/weather.json public/data/commodities.json public/data/energy-prices.json
+            public/data/fuel-prices.json public/data/food-prices.json public/data/cpi-prices.json
+            public/data/debt.json public/data/aid-flows.json ops/iati_resume.json ops/iati_excluded.json
+            public/data/air-quality.json public/data/regulations.json
+          )
+          selected=()
+          for file in "${files[@]}"; do
+            if [ -f "$file" ] || git ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+              selected+=("$file")
+            fi
+          done
+          [ "${#selected[@]}" -gt 0 ] || { echo "No snapshot files found" >&2; exit 1; }
+          printf 'files=%s\n' "${selected[*]}" >> "$GITHUB_OUTPUT"
+
       - name: Commit exported snapshot
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Refresh static snapshot export"
-          file_pattern: "public/data/sources_public.json public/briefs/investor/latest-public.json public/data/live_events.json ops/source_health.json public/data/market_indicators.json public/data/indicator_history.json public/data/daily_brief.json public/data/scheduled_tasks.json public/data/esx_lab.json public/data/earthquakes.json public/data/locust.json public/data/weather.json public/data/commodities.json public/data/energy-prices.json public/data/fuel-prices.json public/data/food-prices.json public/data/cpi-prices.json public/data/debt.json public/data/aid-flows.json ops/iati_resume.json ops/iati_excluded.json public/data/air-quality.json"
+          file_pattern: ${{ steps.snapshot_files.outputs.files }}
 
       - name: Preview Telegram messages
         run: |
