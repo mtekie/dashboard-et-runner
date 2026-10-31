@@ -45,6 +45,9 @@ jobs:
       - name: Validate ingestion task manifest
         run: pnpm run check:schedule
 
+      - name: Apply database migrations before ingestion
+        run: pnpm run db:migrate
+
       - name: Run overlap-safe durable ingestion worker
         id: ingest_worker
         run: pnpm run worker:ingest
